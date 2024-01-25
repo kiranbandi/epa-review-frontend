@@ -9,104 +9,79 @@ import {
   IonCardTitle,
   IonContent,
   IonHeader,
-  IonIcon,
   IonInput,
   IonItem,
   IonLabel,
   IonPage,
-  IonSelect,
-  IonSelectOption,
   IonText,
   IonTitle,
-  IonToggle,
   IonToolbar,
   useIonAlert,
-  useIonPopover,
 } from "@ionic/react";
 import { csvParse, DSVRowArray } from "d3-dsv";
-import { person } from "ionicons/icons";
 import { useEffect, useRef, useState } from "react";
-import UserMenu from "../components/UserMenuNew";
-import { fetchUser } from "../utils/auth";
-import { FeedbackGroup, Results, Tag } from "../utils/new-data-structure";
-import ServerInfo from "../utils/ServerInfo";
-import { User } from "../utils/User";
+import FileSaver from 'file-saver';
 
-let pyodide: any;
-let pythonDeidentifier: any;
+type QualScoreMap = {
+  qual: string,
+  q1: string,
+  q2: string,
+  q3: string,
+}
 
 const Dashboard: React.FC = () => {
 
   // Model loading
   const [ready, setReady] = useState(false);
-  const [user, setUser] = useState<User>();
-  const [users, setUsers] = useState<User[]>();
-  const [sharedUserIds, setSharedUserIds] = useState<string[]>([]);
-  const [shouldShowVideo, setShouldShowVideo] = useState(false);
   const [file, setFile] = useState<File>();
+  const [processingCount, setProcessingCount] = useState(0);
   const [data, setData] = useState<DSVRowArray<string>>();
-  const [nameDictionary, setNameDictionary] = useState<any>();
   const [dataPreviewLimit, setDataPreviewLimit] = useState(10);
   const [feedbackColumns, setFeedbackColumns] = useState(["Feedback"]);
-  const [residentNameColumns, setResidentNameColumns] = useState([
-    "Resident Name",
-  ]);
-  const [observerNameColumns, setObserverNameColumns] = useState([
-    "Observer Name",
-  ]);
-  const [processing, setProcessing] = useState(false);
 
-  const [presentUserMenuPopover, dismissUserMenuPopover] = useIonPopover(
-    UserMenu,
-    { onHide: () => dismissUserMenuPopover() }
-  );
+  const [processing, setProcessing] = useState(false);
   const [presentAlert] = useIonAlert();
 
-
   // Create a reference to the worker object.
-  const worker = useRef(null);
+  const worker = useRef<Worker | null>(null);
 
   // We use the `useEffect` hook to setup the worker as soon as the `App` component is mounted.
   useEffect(() => {
     if (!worker.current) {
       // Create the worker if it does not yet exist.
-      let current = new Worker(`${process.env.PUBLIC_URL}/assets/worker.js`, {
+      worker.current = new Worker(`${process.env.PUBLIC_URL}/assets/worker.js`, {
         type: 'module'
       });
-
-      worker.current = current;
     }
 
     // Create a callback function for messages from the worker thread.
-    const onMessageReceived = (e) => {
+    const onMessageReceived = (e: MessageEvent) => {
       switch (e.data.status) {
-        case 'initiate':
-          // Model file start load: add a new progress item to the list.
-          setReady(false);
-          break;
-
         case 'ready':
-          // Pipeline ready: the worker is ready to accept messages.
+          // Pipeline ready: Model loaded and the worker is ready to accept narrative comments for processing.
           setReady(true);
           break;
-
+        case 'progress':
+          setProcessingCount(e.data.progressCount);
+          break;
         case 'complete':
-          console.log(e.data.output)
+          saveCSVresults(e.data.output);
           break;
       }
     };
     // Attach the callback function as an event listener.
     worker.current.addEventListener('message', onMessageReceived);
     // Define a cleanup function for when the component is unmounted.
-    return () => worker.current.removeEventListener('message', onMessageReceived);
+    return () => worker.current?.removeEventListener('message', onMessageReceived);
   });
 
-  useEffect(() => {
-    worker.current.postMessage({
-      text: 'Sample text sent from worker'
-    });
-  }, [])
+  // Trigger worker with an empty comment list to start loading the models
+  useEffect(() => { worker.current?.postMessage({ comments: [] }) }, [])
 
+  function generateQuALScores(comments: string[]) {
+    setProcessingCount(0);
+    worker.current?.postMessage({ comments });
+  }
 
   return (
     <IonPage>
@@ -116,17 +91,6 @@ const Dashboard: React.FC = () => {
             <IonBackButton defaultHref="/new" />
           </IonButtons>
           <IonTitle>Generate QuAL Scores</IonTitle>
-          <IonButtons slot="end">
-            <IonButton
-              color={user ? "primary" : ""}
-              title="User"
-              onClick={(event) =>
-                presentUserMenuPopover({ event: event.nativeEvent })
-              }
-            >
-              <IonIcon slot="icon-only" icon={person}></IonIcon>
-            </IonButton>
-          </IonButtons>
         </IonToolbar>
       </IonHeader>
       <IonContent>
@@ -142,6 +106,15 @@ const Dashboard: React.FC = () => {
         {renderColumnSelectionCard(
           !(file && data && ready) || processing
         )}
+
+
+        {processing &&
+          <IonCard>
+            <IonCardHeader>
+              <IonCardTitle> {`Processed ${processingCount}/${data.length} Records`} </IonCardTitle>
+            </IonCardHeader>
+          </IonCard>}
+
       </IonContent>
     </IonPage>
   );
@@ -229,7 +202,7 @@ const Dashboard: React.FC = () => {
                   {
                     text: "Yes",
                     role: "confirm",
-                    handler: () => (saveProjectFile)(),
+                    handler: () => (processCSVFile)(),
                   },
                 ],
               });
@@ -247,14 +220,14 @@ const Dashboard: React.FC = () => {
 
 
   function renderFileSelectionCard(disabled: boolean) {
-
     return (
       <IonCard disabled={disabled}>
         <IonCardHeader>
           <IonCardTitle>Load your CSV File.</IonCardTitle>
           <IonText>
-            Select the CSV file containing the dataset that you would like to
-            deidentify. Please note that this file will NOT be uploaded to our
+            Select the CSV file containing the narrative feedback that you would like to
+            process on the QuAL score generation tool.
+            Please note that this file will NOT be uploaded to our
             servers, but reformatted on your local system into a new file for
             you to download.
           </IonText>
@@ -285,105 +258,45 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  async function saveProjectFile() {
-    setProcessing(true);
-    setTimeout(async () => {
-      const fileHandle = await (window as any).showSaveFilePicker({
-        types: [
-          {
-            description: "EPA deidentification project file",
-            accept: { "application/json": [".deid"] },
-          },
-        ],
-      });
-      const writable = await fileHandle.createWritable();
-      const result = await processData();
-      await writable.write(JSON.stringify(result));
-      await writable.close();
-      alert("Deidentification finished and the project file is saved.");
-      setProcessing(false);
-    }, 100);
-  }
+  function saveCSVresults(comments: QualScoreMap[]) {
 
-  async function processData() {
-    const startTime = new Date();
-    const records = data
-      ?.filter((record) =>
-        feedbackColumns?.some((columnName) => record[columnName])
-      )
-      ?.map((record) => ({
-        feedbackTexts: feedbackColumns?.map((columnName) => record[columnName]),
-        residentNames:
-          residentNameColumns?.flatMap(
-            (columName) => record[columName]?.match(/\w+/g) || []
-          ) || [],
-        observerNames:
-          observerNameColumns?.flatMap(
-            (columName) => record[columName]?.match(/\w+/g) || []
-          ) || [],
-      }));
-    const results: Results = {
-      feedbackGroups: (await Promise.all(
-        (records || []).map(async (record, i) => {
-          const names = record.residentNames.concat(record.observerNames);
-          return {
-            feedbacks: await Promise.all(
-              record.feedbackTexts.map(async (feedback) => ({
-                originalText: feedback || "",
-                tags: (
-                  await deidentify(feedback || "", names, nameDictionary)
-                ).map(
-                  (analyzerResult: { [x: string]: any }) =>
-                  ({
-                    ...analyzerResult,
-                    name: analyzerResult["label"],
-                  } as unknown as Tag)
-                ),
-              }))
-            ),
-          };
-        })
-      )) as FeedbackGroup[],
-    };
-    console.log(
-      `Processing time elapsed ${new Date().getTime() - startTime.getTime()} ms.`
-    );
-    return {
-      rawData: data,
-      config: {
-        feedbackColumns,
-        residentNameColumns,
-        observerNameColumns,
-      },
-      results,
-    };
-  }
+    const dataMap = data?.map((e, i) => ({ ...e, ...comments[i] }));
 
-  async function loadDeidentifier() {
-    if (!pyodide) {
-      pyodide = await (window as any).loadPyodide({
-        indexURL: `${process.env.PUBLIC_URL}/pyodide`,
-      });
-    }
-    const response = await fetch(`${process.env.PUBLIC_URL}/deidentifier.py`);
-    const pythonScript = await response.text();
-    pyodide.runPython(pythonScript);
-    pythonDeidentifier = pyodide.runPython(`AnonymizeText`);
-  }
-
-  async function deidentify(
-    text: string,
-    names: string[],
-    nicknames: { [name: string]: string[] }
-  ) {
-    if (!((window as any).previousNicknames === nicknames)) {
-      (window as any).nicknamesAsPy = pyodide.toPy(nicknames);
-      (window as any).previousNicknames = nicknames;
-    }
-    return pythonDeidentifier(text, names, (window as any).nicknamesAsPy).toJs({
-      dict_converter: Object.fromEntries,
+    var convertedData = dataMap?.map((dataPoint) => {
+      return Object.values(dataPoint)?.map((value) => {
+        if (typeof (value) == 'string') {
+          //  quick fix hashes seem to be breaking the code so we will replace them with enclosed text of hash
+          if (value.indexOf("#") > -1) {
+            value = value.split("#").join("-hash-");
+          }
+          return '"' + value.split('"').join('""') + '"';
+        } else return '"' + value + '"';
+      }).join(',');
     });
+
+    // Add file headers to top of the file
+    convertedData.unshift([...data.columns, 'QuAL Score', 'Evidence Score', 'Suggestion Given', 'Suggestion Linked']);
+    var blob = new Blob(["\ufeff" + convertedData.join("\n")], { type: "text/csv;charset=utf-8" });
+    var timeStamp = (new Date()).toString().split("GMT")[0];
+    FileSaver.saveAs(blob, "rcm-data" + "-" + timeStamp + ".csv");
+
+    alert("QuAL score generation finished and the output file is saved.");
+    setProcessing(false);
   }
+
+
+  async function processCSVFile() {
+    setProcessing(true);
+    const records = data
+      ?.map((record) => {
+        return feedbackColumns?.map((columnName) => record[columnName]).join(' ').split('\n').join(" ");
+      });
+
+    if (records && records?.length > 0) {
+      generateQuALScores(records as string[]);
+    }
+  }
+
 };
 
 export default Dashboard;

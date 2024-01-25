@@ -4,48 +4,57 @@ import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers
 // Since we will download the model from the Hugging Face Hub, we can skip the local model check
 env.allowLocalModels = false;
 
-/**
- * This class uses the Singleton pattern to ensure that only one instance of the
- * pipeline is loaded. This is because loading the pipeline is an expensive
- * operation and we don't want to do it every time we want to translate a sentence.
- */
-class QualScorePipeline {
-    static task = 'text-classification';
-    static model = 'kiranbandi/nlp-qual-q3i';
-    static instance = null;
-
-    static async getInstance(progress_callback = null) {
-        if (this.instance === null) {
-            this.instance = pipeline(this.task, this.model, { progress_callback });
-        }
-
-        return this.instance;
-    }
-}
+const task = 'text-classification';
+let q1Model = null, q2Model = null, q3Model = null;
 
 // Listen for messages from the main thread
 self.addEventListener('message', async (event) => {
 
-    console.log("Message received from main script");
-    // Retrieve the translation pipeline. When called for the first time,
-    // this will load the pipeline and save it for future use.
-    let translator = await QualScorePipeline.getInstance(x => {
-        // We also add a progress callback to the pipeline so that we can
-        // track model loading.
-        self.postMessage(x);
-    });
-
-    if (event.data.text.length > 0) {
-        // Actually perform the translation
-        let output = await translator(event.data.text);
-
-        // Send the output back to the main thread
-        self.postMessage({
-            status: 'complete',
-            output: output,
-        });
-
+    // If the models are not ready, load them and let the main thread know they are ready to use
+    // Retrieve the 3 qualscore model pipelines. When called for the first time,
+    // this will load the pipelines and save them for future use.
+    if (q1Model == null || q2Model == null || q3Model == null) {
+        q1Model = await pipeline(task, 'kiranbandi/nlp-qual-q1');
+        q2Model = await pipeline(task, 'kiranbandi/nlp-qual-q2i');
+        q3Model = await pipeline(task, 'kiranbandi/nlp-qual-q3i');
+        self.postMessage({ status: 'ready' });
     }
 
+    // if the models are ready and comment data is available to process
+    else {
+        if (event.data && event.data.comments && event.data.comments.length > 0) {
+            console.log("started processing comments");
+            let qualScoreList = [];
+
+            let progressCount = 1;
+            for (const comment of event.data.comments) {
+                
+                self.postMessage({ status: 'progress', progressCount });
+
+                let q1 = await q1Model([comment]);
+                let q2i = await q2Model([comment]);
+                let q3i = await q3Model([comment]);
+
+                let q1Label = q1[0].label.slice(6),
+                    q2Label = q2i[0].label.slice(6),
+                    q3Label = q3i[0].label.slice(6);
+                // if no feedback given, then feedback linked would also be absent so override it to false.
+                if (q2Label == '1') { q3Label = '1' }
+                // Generate overall qual score from the other three scores.
+                let qualLabel = +q1Label + (q2Label == '0' ? 1 : 0) + (q3Label == '0' ? 1 : 0);
+
+                qualScoreList.push({ 'qual': qualLabel, 'q1': q1Label, 'q2i': q2Label == '0' ? 'Yes' : 'No', 'q3i': q3Label == '0' ? 'Yes' : 'No' });
+
+                progressCount += 1;
+            }
+
+            console.log("processing comments complete");
+            // Send the output back to the main thread
+            self.postMessage({
+                status: 'complete',
+                output: qualScoreList,
+            });
+        }
+    }
 
 });
