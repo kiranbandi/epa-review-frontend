@@ -129,17 +129,17 @@ const NewHome: React.FC = () => {
         </IonCard>
         <IonGrid>
           <IonRow>
-            <IonCol size="12" sizeMd="6" sizeXl="4">
+            <IonCol size="12" sizeMd="4" sizeXl="4">
               <IonButton
-                style={{ width: "100%", height: "10rem" }}
+                style={{ width: "100%", height: "7.5rem" }}
                 href={`${process.env.PUBLIC_URL}/new/load`}
               >
                 Format and deidentify a New Dataset
               </IonButton>
             </IonCol>
-            <IonCol size="12" sizeMd="6" sizeXl="4">
+            <IonCol size="12" sizeMd="4" sizeXl="4">
               <IonButton
-                style={{ width: "100%", height: "10rem" }}
+                style={{ width: "100%", height: "7.5rem" }}
                 href={
                   user
                     ? `${process.env.PUBLIC_URL}/new/list`
@@ -147,6 +147,14 @@ const NewHome: React.FC = () => {
                 }
               >
                 Review my deidentified Data
+              </IonButton>
+            </IonCol>
+            <IonCol size="12" sizeMd="4" sizeXl="4">
+              <IonButton
+                style={{ width: "100%", height: "7.5rem" }}
+                href={`${process.env.PUBLIC_URL}/new/qualload`}
+              >
+                Generate QuAL scores for my Data
               </IonButton>
             </IonCol>
           </IonRow>

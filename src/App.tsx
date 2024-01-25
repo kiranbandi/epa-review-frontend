@@ -34,6 +34,7 @@ import LocalModeLoadNew from "./pages/LocalModeLoadNew";
 import LocalMode from "./pages/LocalMode";
 import LocalModeReviewDetail from "./pages/LocalModeReviewDetail";
 import NewLoadDataset from "./pages/NewLoadDataset";
+import NewLoadQualDataset from "./pages/NewLoadQualDataset";
 import NewReview from "./pages/NewReview";
 import { User } from "./utils/User";
 import NewHome from "./pages/NewHome";
@@ -108,6 +109,9 @@ const App: React.FC = () => {
           </Route>
           <Route exact path="/new/load">
             <NewLoadDataset />
+          </Route>
+          <Route exact path="/new/qualload">
+            <NewLoadQualDataset />
           </Route>
           <Route exact path="/new/review">
             <NewReview />

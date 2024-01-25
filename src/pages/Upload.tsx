@@ -63,13 +63,19 @@ const Upload: React.FC = () => {
 
   useEffect(() => {
     async function obtainUsers() {
-      const response = await fetch(`${ServerInfo.SERVER_BASE_URL}/user/all`, {
-        credentials: "include",
-      });
-      let users: User[];
-      if (response.ok && (users = await response.json())) {
-        setUsers(users);
+
+      try {
+        const response = await fetch(`${ServerInfo.SERVER_BASE_URL}/user/all`, {
+          credentials: "include",
+        });
+        let users: User[];
+        if (response.ok && (users = await response.json())) {
+          setUsers(users);
+        }
+      } catch (error) {
+        console.log(error);
       }
+
     }
     obtainUsers();
   }, []);
@@ -444,13 +450,11 @@ const Upload: React.FC = () => {
             Select File
           </IonButton>
           <br />
-          <IonText>{`${
-            file
-              ? `${file.name} - ${
-                  data ? `${data.length} Records` : "Not Loaded"
-                }`
+          <IonText>{`${file
+              ? `${file.name} - ${data ? `${data.length} Records` : "Not Loaded"
+              }`
               : ""
-          }`}</IonText>
+            }`}</IonText>
         </IonCardContent>
       </IonCard>
     );
